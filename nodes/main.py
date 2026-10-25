@@ -1,4 +1,4 @@
-"""promboard.wan22-animate — Wan 2.2 Animate(동작 옮기기 · 인물 바꾸기) 노드 코드. 🔴 미검증: 이 코드는 실제로 돌려 보지 않았다.
+"""promboard.wan22-animate — Wan 2.2 Animate(동작 옮기기 · 인물 바꾸기) 노드 코드. 🔴 검증 안 됨: 이 코드는 실제로 돌려 보지 않았다.
 
 노드 하나(wan-animate)가 캐릭터 그림 · 움직임 영상(필수)과 인물 마스크 영상(선택)을 받는다.
   동작 옮기기(animate)   캐릭터 그림 속 인물이 움직임 영상 속 사람의 몸짓 · 표정대로 움직이는 영상(배경은 캐릭터 그림)
@@ -12,7 +12,8 @@
     키우기 값은 공식 기본(iterations 3, k 7, w_len 1, h_len 1).
   - '몸 비율 맞추기'(retarget)는 공식 기본 방식(FLUX Kontext 없이)이다. 캐릭터 그림과 영상 첫 프레임의 사람이 모두 정면으로 팔다리를
     편 자세일 때만 맞는다(공식 안내).
-생성: diffusers WanAnimatePipeline. 변환기는 QuantStack GGUF Q8_0(공식 Animate-14B 변환), 글 인코더 UMT5-XXL(Wan2.2 공식, 5B 저장소와
+생성: diffusers WanAnimatePipeline. 변환기는 설정 '경량화'로 고른 QuantStack GGUF Q8_0 · Q4_K_M(공식 Animate-14B 변환,
+  '자동'은 앱이 이 PC 그래픽카드로 풀어 넘긴다 — 노드 코드는 '자동'을 받지 않는다), 글 인코더 UMT5-XXL(Wan2.2 공식, 5B 저장소와
   같은 파일) · CLIP 그림 인코더 · Wan2.1 VAE 는 공식 Wan-AI/Wan2.2-Animate-14B-Diffusers. 공식 예시 값: 20단계, guidance 1.0,
   77프레임 구간(segment_frame_length), 출력 30fps(전처리 fps).
 
@@ -26,7 +27,10 @@ import time
 
 DIFFUSERS = "Wan-AI/Wan2.2-Animate-14B-Diffusers"
 TEXT_REPO = "Wan-AI/Wan2.2-TI2V-5B-Diffusers"  # 같은 UMT5 파일(sha256 같음) — 다른 Wan 플러그인과 같이 쓴다
-GGUF = "QuantStack/Wan2.2-Animate-14B-GGUF/Wan2.2-Animate-14B-Q8_0.gguf"
+GGUF = {  # 설정 quantization → 변환기 파일(manifest requires.models 의 when 과 짝)
+    "gguf-q8": "QuantStack/Wan2.2-Animate-14B-GGUF/Wan2.2-Animate-14B-Q8_0.gguf",
+    "gguf-q4": "QuantStack/Wan2.2-Animate-14B-GGUF/Wan2.2-Animate-14B-Q4_K_M.gguf",
+}
 DET = "Wan-AI/Wan2.2-Animate-14B/process_checkpoint/det/yolov10m.onnx"
 POSE = "Wan-AI/Wan2.2-Animate-14B/process_checkpoint/pose2d/vitpose_h_wholebody.onnx/end2end.onnx"
 AREAS = {"720p": 1280 * 720, "480p": 832 * 480}
@@ -41,7 +45,7 @@ DEFAULT_NEGATIVE = (
 )
 TIME_BUDGET_SEC = 1050  # PromBoard 실행기 노드 한 번 900초 + 적재 몫 180초
 
-_CACHE = {"pipe": None, "pose": None}
+_CACHE = {"pipe": None, "quant": None, "pose": None}
 
 
 def _vram_mb():
@@ -152,18 +156,20 @@ def _preprocess(ctx, progress, refer, video_path, mask_path, area, replace, reta
     return [to_pil(c) for c in cond], [to_pil(f) for f in faces], bg_images, mask_images, to_pil(refer_np)
 
 
-def _pipeline(ctx, progress):
+def _pipeline(ctx, progress, quant):
     import torch
     from diffusers import AutoencoderKLWan, GGUFQuantizationConfig, UniPCMultistepScheduler, WanAnimatePipeline, WanAnimateTransformer3DModel
     from transformers import AutoTokenizer, CLIPImageProcessor, CLIPVisionModel, UMT5EncoderModel
 
-    if _CACHE["pipe"] is not None:
+    if _CACHE["pipe"] is not None and _CACHE["quant"] == quant:
         return _CACHE["pipe"]
+    _CACHE.update(pipe=None, quant=None)
+    _free_cuda()
     progress(0.0, "load-model")
     root = _repo_dir(ctx, DIFFUSERS, "model_index.json")
     text = _repo_dir(ctx, TEXT_REPO, "text_encoder/config.json")
     transformer = WanAnimateTransformer3DModel.from_single_file(
-        ctx.model_path(GGUF),
+        ctx.model_path(GGUF[quant]),
         quantization_config=GGUFQuantizationConfig(compute_dtype=torch.bfloat16),
         config=root,
         subfolder="transformer",
@@ -180,13 +186,21 @@ def _pipeline(ctx, progress):
         image_encoder=CLIPVisionModel.from_pretrained(os.path.join(root, "image_encoder"), torch_dtype=torch.bfloat16),
         transformer=transformer,
     )
-    # 그래픽카드가 작으면(24GB 미만) 모든 부품을 블록 단위로 올렸다 내린다. 크면 부품 단위로.
+    # 그래픽카드가 작으면(24GB 미만) 변환기는 블록 하나씩, 글 · 그림 인코더는 층(leaf) 단위로 올렸다 내리고 VAE 는 그래픽카드에 둔다.
+    # 블록 단위(block_level)는 바로 아래 자식의 ModuleList 만 묶어, 층이 한 단계 깊은 UMT5 · CLIP 은 통째로 올라간다.
+    # 크면 부품 단위로.
     if _vram_mb() < 24_000:
-        pipe.enable_group_offload(onload_device=torch.device("cuda"), offload_device=torch.device("cpu"), offload_type="block_level", num_blocks_per_group=1)
+        from diffusers.hooks import apply_group_offloading
+
+        cuda, cpu = torch.device("cuda"), torch.device("cpu")
+        pipe.transformer.enable_group_offload(onload_device=cuda, offload_device=cpu, offload_type="block_level", num_blocks_per_group=1)
+        for name in ("text_encoder", "image_encoder"):
+            apply_group_offloading(getattr(pipe, name), onload_device=cuda, offload_device=cpu, offload_type="leaf_level")
+        pipe.vae.to(cuda)
     else:
         pipe.enable_model_cpu_offload()
     pipe.set_progress_bar_config(disable=True)
-    _CACHE["pipe"] = pipe
+    _CACHE.update(pipe=pipe, quant=quant)
     return pipe
 
 
@@ -215,7 +229,7 @@ def wan_animate(ctx, inputs, settings):
         )
         width, height = refer_img.size
         ctx.log(f"preprocess {len(cond)} frames {width}x{height} in {time.monotonic() - t0:.1f}s")
-        pipe = _pipeline(ctx, _ProgressRange(ctx, 0.2, 0.25))
+        pipe = _pipeline(ctx, _ProgressRange(ctx, 0.2, 0.25), settings["quantization"])
         segments = max(1, math.ceil((len(cond) - 1) / (SEGMENT - 1)))
         total_steps = segments * STEPS
         done = [0]
@@ -267,12 +281,19 @@ def wan_animate(ctx, inputs, settings):
 
         _write_mp4(pose_out, np.stack([np.asarray(c, dtype=np.float32) / 255.0 for c in cond]), FPS)
     except torch.OutOfMemoryError:
-        _CACHE["pipe"] = None
-        raise RuntimeError(
-            "그래픽카드 메모리가 모자라 멈췄습니다. 해상도를 480P 로 낮추거나 다른 프로그램(게임 · 다른 AI)을 닫아 주세요."
-        ) from None
+        oom = True
+    else:
+        oom = False
     finally:
         _free_cuda()
+    if oom:
+        # except 블록 밖에서 정리하고 새 오류를 낸다 — 블록 안에서 내면 원래 오류(와 그 프레임이 쥔 그래픽카드 텐서)가
+        # 새 오류의 __context__ 로 남아 사이드카가 다음 실행까지 메모리를 놓지 못한다.
+        _CACHE.update(pipe=None, quant=None)
+        _free_cuda()
+        raise RuntimeError(
+            "그래픽카드 메모리가 모자라 멈췄습니다. 해상도를 480P 로 낮추거나 다른 프로그램(게임 · 다른 AI)을 닫아 주세요."
+        )
     ctx.progress(1.0, "done")
     return {"video": out, "pose": pose_out}
 
