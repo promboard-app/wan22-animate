@@ -30,7 +30,7 @@ PromBoard 커뮤니티 플러그인입니다. 캔버스에 **Wan 2.2 Animate** �
 | CLIP 그림 인코더 · Wan2.1 VAE · 설정 | [Wan-AI/Wan2.2-Animate-14B-Diffusers](https://huggingface.co/Wan-AI/Wan2.2-Animate-14B-Diffusers) | 1.8GB |
 | 전처리 YOLOv10m · ViTPose-H 전신 | [Wan-AI/Wan2.2-Animate-14B](https://huggingface.co/Wan-AI/Wan2.2-Animate-14B) `process_checkpoint/` | 2.6GB |
 
-- 경량화: 처음 값 **자동**은 그래픽카드 32GB 이상이면 GGUF Q8, 그 밖(그래픽카드를 모르는 PC 포함)은 GGUF Q4 를 고르고 그 판만 받습니다. 24GB 이상 그래픽카드는 변환기를 통째로 올려 Q8(18.7GB)은 32GB 부터 넉넉하고, 그보다 작은 그래픽카드는 변환기를 블록 하나씩 올리므로 판이 RAM 사용량 · 받기 크기만 바꿉니다. 두 판 모두 텐서 이름이 diffusers 변환과 맞는 것을 GGUF 머리로 확인했고, 실제로 돌려 보지는 않았습니다.
+- 경량화: 처음 값 **자동**은 그래픽카드 32GB 이상이면 GGUF Q8, 그 밖(그래픽카드를 모르는 PC 포함)은 GGUF Q4 를 고르고 그 판만 받습니다. 24GB 이상 그래픽카드는 변환기를 통째로 올려 Q8(18.7GB)은 계산 몫까지 32GB 가 필요하고(그래서 Q8 의 필요 그래픽카드 메모리를 32GB, Q4 를 24GB 로 적었습니다), 그보다 작은 그래픽카드는 변환기를 블록 하나씩 올리므로 판이 RAM 사용량 · 받기 크기만 바꿉니다. 두 판 모두 텐서 이름이 diffusers 변환과 맞는 것을 GGUF 머리로 확인했고, 실제로 돌려 보지는 않았습니다.
 
 ## 필요한 사양
 
@@ -74,7 +74,7 @@ A PromBoard community plugin. It adds one **Wan 2.2 Animate** node (`Wan 2.2 Ani
 > 🔴 **Unverified**: not run yet. The 12 GB card this plugin was built on gives no reason to expect the 14B model to finish within PromBoard's single-run limit (about 15 minutes), so it was not tested. Please report problems in [issues](https://github.com/promboard-app/wan22-animate/issues).
 
 - Inputs: character image (required), driving video (required, one person, up to 20 s), person mask video (required for replace), prompt (optional; the official default prompt is used when empty). Outputs: result video (30 fps H.264 MP4, no audio) and the extracted pose video.
-- Settings: mode, retarget body proportions (animate only), resolution by area (720P · 480P), quantization (Auto = GGUF Q8 on 32 GB+ GPUs, GGUF Q4_K_M otherwise; only the chosen file is downloaded), seed. Generation values follow the official config: 20 steps, guidance 1.0, 77-frame segments, 30 fps.
+- Settings: mode, retarget body proportions (animate only), resolution by area (720P · 480P), quantization (Auto = GGUF Q8 on 32 GB+ GPUs, GGUF Q4_K_M otherwise; only the chosen file is downloaded. From 24 GB the whole transformer is moved onto the GPU, so Q8 needs 32 GB and Q4 24 GB), seed. Generation values follow the official config: 20 steps, guidance 1.0, 77-frame segments, 30 fps.
 - Downloads (once, about 27 GB with Q4 / 35 GB with Q8): Animate-14B GGUF Q4_K_M or Q8_0 transformer (QuantStack, 11.5 / 18.7 GB), UMT5-XXL text encoder from Wan-AI/Wan2.2-TI2V-5B-Diffusers (same file as the Animate repo, shared with the Wan 2.2 plugin, 11.4 GB), CLIP image encoder · Wan2.1 VAE · configs from Wan-AI/Wan2.2-Animate-14B-Diffusers (1.8 GB), and the official preprocessing models YOLOv10m · ViTPose-H wholebody from Wan-AI/Wan2.2-Animate-14B (2.6 GB).
 - Requirements: NVIDIA GPU (CUDA) only. There is no official minimum VRAM figure; **24 GB or more** is a recommendation, not a measurement (shown as high-end in PromBoard). On smaller cards the transformer is offloaded block by block, the text and image encoders layer by layer, and the VAE stays on the GPU. 64 GB RAM recommended.
 - **Install**: PromBoard → Plugin Manager → **Community plugins** → Browse → install. Turn off **Restricted mode** and enable the plugin. The first run prepares the Python packages and the models (about 27 GB, or 35 GB with Q8).

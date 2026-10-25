@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "id": "promboard.wan22-animate",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "name": "Wan 2.2 Animate — 동작 옮기기 · 인물 바꾸기",
   "description": "알리바바 Wan 2.2 Animate(14B) 공개 모델로 캐릭터 그림 속 인물을 움직임 영상 속 사람의 몸짓 · 표정대로 움직이게 하거나(동작 옮기기), 영상 속 사람을 캐릭터 그림의 인물로 바꾼다(인물 바꾸기 — 인물 마스크 영상 필요). 관절 · 얼굴은 Wan 공식 전처리(YOLOv10 + ViTPose)로 뽑는다. 받기 약 27GB(변환기 GGUF Q4 · 글 인코더 · 전처리 모델, 그래픽카드 32GB 이상은 '자동'이 Q8 을 골라 약 35GB). 그래픽카드 24GB 이상 · RAM 64GB 권장이고 아직 실제로 돌려 보지 않았다(검증 안 됨). 라이선스 Apache-2.0. NVIDIA 그래픽카드 전용.",
   "author": "PromBoard",
@@ -121,7 +121,7 @@
         {
           "id": "quantization",
           "label": "경량화",
-          "help": "변환기(14B) 판. 자동: 그래픽카드 32GB 이상이면 GGUF Q8(받기 18.7GB), 그 밖은 GGUF Q4(11.5GB). 24GB 보다 작은 그래픽카드는 변환기를 블록씩 올리므로 판은 RAM · 받기 크기를 바꾼다. 고른 판만 받는다.",
+          "help": "변환기(14B) 판. 자동: 그래픽카드 32GB 이상이면 GGUF Q8(받기 18.7GB), 그 밖은 GGUF Q4(11.5GB). 24GB 이상은 변환기를 통째로 올려 Q8 은 32GB 가 필요하다. 24GB 보다 작으면 블록씩 올려 판은 RAM · 받기 크기만 바꾼다. 고른 판만 받는다.",
           "type": "select",
           "options": [
             {
@@ -140,7 +140,7 @@
             {
               "value": "gguf-q8",
               "label": "GGUF Q8",
-              "vramMinMb": 24000
+              "vramMinMb": 32768
             },
             {
               "value": "gguf-q4",
